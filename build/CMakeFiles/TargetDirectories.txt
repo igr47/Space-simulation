@@ -1,0 +1,3 @@
+/home/igiris/git_projects/space_simulation/build/CMakeFiles/solar_system.dir
+/home/igiris/git_projects/space_simulation/build/CMakeFiles/edit_cache.dir
+/home/igiris/git_projects/space_simulation/build/CMakeFiles/rebuild_cache.dir
