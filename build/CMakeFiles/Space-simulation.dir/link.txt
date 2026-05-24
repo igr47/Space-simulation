@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/Space-simulation.dir/link.d "CMakeFiles/Space-simulation.dir/main.cpp.o" -o bin/Space-simulation  lib/libglad.a /usr/local/lib/libglfw3.a -ldl /usr/lib/x86_64-linux-gnu/libGLX.so /usr/lib/x86_64-linux-gnu/libOpenGL.so /usr/lib/x86_64-linux-gnu/librt.a -lm -ldl

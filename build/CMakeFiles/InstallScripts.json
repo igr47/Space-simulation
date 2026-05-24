@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/igris/git_projects/Space-simulation/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
