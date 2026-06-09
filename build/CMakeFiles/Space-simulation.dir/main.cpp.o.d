@@ -371,4 +371,16 @@ CMakeFiles/Space-simulation.dir/main.cpp.o: \
  /usr/include/c++/15/bits/uniform_int_dist.h \
  /usr/include/c++/15/bits/stl_tempbuf.h \
  /usr/include/c++/15/pstl/glue_algorithm_defs.h \
- /usr/include/c++/15/pstl/execution_defs.h
+ /usr/include/c++/15/pstl/execution_defs.h /usr/include/c++/15/map \
+ /usr/include/c++/15/bits/stl_tree.h \
+ /usr/include/c++/15/ext/aligned_buffer.h \
+ /usr/include/c++/15/bits/node_handle.h \
+ /usr/include/c++/15/bits/stl_map.h \
+ /usr/include/c++/15/bits/stl_multimap.h \
+ /usr/include/c++/15/bits/erase_if.h \
+ /home/igris/git_projects/Space-simulation/stb_image.h \
+ /usr/include/c++/15/stdlib.h /usr/include/c++/15/math.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/emmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/xmmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/mmintrin.h \
+ /usr/lib/gcc/x86_64-linux-gnu/15/include/mm_malloc.h

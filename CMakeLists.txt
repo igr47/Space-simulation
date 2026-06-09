@@ -35,9 +35,22 @@ if(NOT EXISTS ${GLAD_INCLUDE_DIR}/glad/glad.h)
     message(FATAL_ERROR "GLAD header not found at: ${GLAD_INCLUDE_DIR}/glad/glad.h")
 endif()
 
-# Create a static library for GLAD (this ensures it's compiled separately)
+# Create a static library for GLAD
 add_library(glad STATIC ${GLAD_SOURCE_FILE})
 target_include_directories(glad PUBLIC ${GLAD_INCLUDE_DIR})
+
+# Add stb_image support
+set(STB_IMAGE_HEADER ${CMAKE_SOURCE_DIR}/stb_image.h)
+if(NOT EXISTS ${STB_IMAGE_HEADER})
+    message(FATAL_ERROR "stb_image.h not found at: ${STB_IMAGE_HEADER}")
+endif()
+
+# Create an interface library for stb
+add_library(stb_image INTERFACE)
+target_include_directories(stb_image INTERFACE ${CMAKE_SOURCE_DIR})
+
+# Define STB_IMAGE_IMPLEMENTATION in the main executable
+target_compile_definitions(stb_image INTERFACE STB_IMAGE_IMPLEMENTATION)
 
 # Create executable
 add_executable(Space-simulation main.cpp)
@@ -48,14 +61,25 @@ target_link_libraries(Space-simulation
     OpenGL::GL
     glfw
     glm::glm
+    stb_image
     dl
 )
 
-# Also include the GLAD headers for atom
+# Also include the GLAD headers
 target_include_directories(Space-simulation PRIVATE ${GLAD_INCLUDE_DIR})
 
 # Add compiler flags
 target_compile_options(Space-simulation PRIVATE -fPIC)
+
+# Copy texture files to build directory
+file(GLOB TEXTURE_FILES 
+    ${CMAKE_SOURCE_DIR}/*.jpg
+    ${CMAKE_SOURCE_DIR}/*.png
+)
+
+foreach(TEXTURE_FILE ${TEXTURE_FILES})
+    file(COPY ${TEXTURE_FILE} DESTINATION ${CMAKE_BINARY_DIR}/bin)
+endforeach()
 
 # For debugging
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -66,4 +90,7 @@ message(STATUS "==========================================")
 message(STATUS "GLAD configuration:")
 message(STATUS "  Include directory: ${GLAD_INCLUDE_DIR}")
 message(STATUS "  Source file: ${GLAD_SOURCE_FILE}")
+message(STATUS "==========================================")
+message(STATUS "STB configuration:")
+message(STATUS "  Header: ${STB_IMAGE_HEADER}")
 message(STATUS "==========================================")
