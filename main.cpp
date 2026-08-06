@@ -1,5 +1,7 @@
+#include <ctime>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <glm/ext/vector_float3.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -8,6 +10,7 @@
 #include <vector>
 #include <cmath>
 #include <string>
+#include <cstdlib>
 #include <algorithm>
 #include <map>
 
@@ -157,6 +160,20 @@ struct Mesh {
     int indexCount;
 };
 
+struct AsteroidBelt {
+    unsigned int VAO, VBO;
+    int count;
+};
+
+struct Comet {
+    glm::vec3 position;
+    glm::vec3 velocity;
+    float tailLength;
+    float life;
+    float radius;
+};
+std::vector<Comet> comets;
+
 Mesh createSphere(float radius, int sectors = 32, int stacks = 32) {
     Mesh mesh;
     std::vector<float> verts;
@@ -227,6 +244,33 @@ Mesh createSphere(float radius, int sectors = 32, int stacks = 32) {
 
     glBindVertexArray(0);
     return mesh;
+}
+
+AsteroidBelt createAsteroidBelt(float innerR, float outerR, float height, int numAsteroids) {
+    std::vector<float> verts;
+    for (int i = 0; i < numAsteroids; ++i) {
+        // Random angle
+        float angle = ((float)rand() / RAND_MAX) * 2.0f * 3.14159265f;
+        // Random radius between inner and outer
+        float r = innerR + ((float)rand() / RAND_MAX) * (outerR - innerR);
+        // Random height
+        float y = ((float)rand() / RAND_MAX - 0.5f) * height;
+        
+        verts.push_back(r * cos(angle));
+        verts.push_back(y);
+        verts.push_back(r * sin(angle));
+    }
+    
+    unsigned int VAO, VBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    return {VAO, VBO, numAsteroids};
 }
 
 // Create a ring mesh (for Saturn)
@@ -622,6 +666,13 @@ int main() {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         return -1;
     }
+
+    auto compressDistance = [](float realAU) -> float {
+        float realMkm = realAU * 149.6f;
+        if (realMkm < 100) return realMkm * 2.0f;
+        return 200.0f + (realMkm - 100.0f) * 0.4f;
+    };
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -656,6 +707,8 @@ int main() {
     
     // Create solar system
     auto planets = createSolarSystem();
+    // Astroid belt
+    AsteroidBelt belt = createAsteroidBelt(compressDistance(1.8f), compressDistance(2.8f), 30.0f, 10000);
     
     // Create meshes
     Mesh sunMesh = createSphere(80.0f, 64, 64);
@@ -713,6 +766,8 @@ int main() {
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
     double totalSimulatedDays = 0.0;
+    srand(time(0));
+    float commetSpawnTimer = 0.0f;
     
     // Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -788,6 +843,19 @@ int main() {
         
         glBindVertexArray(sunMesh.VAO);
         glDrawElements(GL_TRIANGLES, sunMesh.indexCount, GL_UNSIGNED_INT, 0);
+
+        // Render Asteroid Belt
+        glUseProgram(planetShader); // Reuse planet shader
+        // Set no lighting (just ambient color) or use a special shader
+        glUniform1i(glGetUniformLocation(planetShader, "isEmissive"), 0);
+        glUniform3f(glGetUniformLocation(planetShader, "objectColor"), 0.5f, 0.5f, 0.5f);
+        glUniform3f(glGetUniformLocation(planetShader, "lightColor"), 0.6f, 0.6f, 0.6f);
+        glUniform1f(glGetUniformLocation(planetShader, "ambientStrength"), 0.8f); 
+
+        // Asteroids don't need a texture, but we can bind a tiny dot texture or just draw points.
+        glPointSize(1.5f);
+        glBindVertexArray(belt.VAO);
+        glDrawArrays(GL_POINTS, 0, belt.count);
         
         // Render planets
         glUniform1i(glGetUniformLocation(planetShader, "isEmissive"), 0);
