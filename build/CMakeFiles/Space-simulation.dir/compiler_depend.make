@@ -100,6 +100,7 @@ CMakeFiles/Space-simulation.dir/main.cpp.o: /home/igris/git_projects/Space-simul
   /usr/include/c++/15/cstdio \
   /usr/include/c++/15/cstdlib \
   /usr/include/c++/15/cstring \
+  /usr/include/c++/15/ctime \
   /usr/include/c++/15/cwchar \
   /usr/include/c++/15/cwctype \
   /usr/include/c++/15/debug/assertions.h \
@@ -775,9 +776,7 @@ CMakeFiles/Space-simulation.dir/main.cpp.o:
 
 /usr/include/glm/ext/vector_bool1.hpp:
 
-/usr/include/glm/trigonometric.hpp:
-
-/usr/include/c++/15/string:
+/usr/include/glm/ext/scalar_uint_sized.hpp:
 
 /usr/include/glm/ext/vector_int4.hpp:
 
@@ -935,9 +934,9 @@ CMakeFiles/Space-simulation.dir/main.cpp.o:
 
 /usr/include/glm/ext/quaternion_common.hpp:
 
-/usr/include/glm/ext/scalar_uint_sized.hpp:
-
 /usr/include/glm/ext/matrix_double2x3.hpp:
+
+/usr/include/c++/15/ctime:
 
 /usr/include/c++/15/stdlib.h:
 
@@ -1148,6 +1147,10 @@ CMakeFiles/Space-simulation.dir/main.cpp.o:
 /usr/include/c++/15/bits/ostream.tcc:
 
 /usr/include/c++/15/bits/ostream_insert.h:
+
+/usr/include/glm/trigonometric.hpp:
+
+/usr/include/c++/15/string:
 
 /usr/include/c++/15/cwctype:
 

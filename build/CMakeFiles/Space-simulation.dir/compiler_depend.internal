@@ -101,6 +101,7 @@ CMakeFiles/Space-simulation.dir/main.cpp.o
  /usr/include/c++/15/cstdio
  /usr/include/c++/15/cstdlib
  /usr/include/c++/15/cstring
+ /usr/include/c++/15/ctime
  /usr/include/c++/15/cwchar
  /usr/include/c++/15/cwctype
  /usr/include/c++/15/debug/assertions.h

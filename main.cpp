@@ -1,7 +1,10 @@
-#include <ctime>
 #include <glad/glad.h>
+#include <ctime>
 #include <GLFW/glfw3.h>
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/matrix_transform.hpp>
 #include <glm/ext/vector_float3.hpp>
+#include <glm/geometric.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -68,7 +71,6 @@ uniform float isRings;
 
 void main() {
     if (isEmissive == 1) {
-        // Sun glow effect
         vec3 texColor = texture(diffuseTexture, TexCoord).rgb;
         float dist = length(WorldPos - lightPos);
         float glow = 1.0 / (1.0 + 0.0001 * dist * dist);
@@ -79,48 +81,28 @@ void main() {
 
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
-    
-    // Calculate diffuse intensity
     float diff = max(dot(norm, lightDir), 0.0);
-    
-    // Sample textures
     vec3 texColor = texture(diffuseTexture, TexCoord).rgb;
-    
-    // Handle night texture (Earth city lights)
+
     if (hasNightTexture == 1 && diff < 0.2) {
         float nightIntensity = 1.0 - (diff / 0.2);
         vec3 nightColor = texture(nightTexture, TexCoord).rgb;
         texColor = mix(texColor, nightColor, nightIntensity * 0.8);
     }
-    
-    // Ambient (lower for space)
+
     vec3 ambient = ambientStrength * lightColor;
-    
-    // Diffuse lighting
     vec3 diffuse = diff * lightColor;
-    
-    // Specular (Blinn-Phong)
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 halfwayDir = normalize(lightDir + viewDir);
     float spec = pow(max(dot(norm, halfwayDir), 0.0), 32.0 * (1.0 - roughness));
     vec3 specular = specularStrength * spec * lightColor;
-    
-    // Distance attenuation for light
     float dist = length(lightPos - FragPos);
     float attenuation = 1.0 / (1.0 + 0.0000001 * dist * dist);
-    
     vec3 result = (ambient + (diffuse + specular) * attenuation) * texColor;
-    
-    // Atmosphere scattering effect for planets
     float fresnel = 1.0 - max(dot(viewDir, norm), 0.0);
     fresnel = pow(fresnel, 2.0);
     result += texColor * fresnel * 0.15;
-    
-    // Special handling for rings
-    if (isRings > 0.5) {
-        result *= 0.9;
-    }
-    
+    if (isRings > 0.5) result *= 0.9;
     FragColor = vec4(result, isRings > 0.5 ? 0.8 : 1.0);
 }
 )";
@@ -146,13 +128,11 @@ void main() {
 }
 )";
 
-// Structure to hold texture IDs
 struct Textures {
     unsigned int diffuse;
     unsigned int night;
 };
 
-// Sphere mesh generator (updated to include texture coordinates properly)
 struct Mesh {
     unsigned int VAO, VBO, EBO;
     std::vector<float> vertices;
@@ -160,9 +140,15 @@ struct Mesh {
     int indexCount;
 };
 
-struct AsteroidBelt {
-    unsigned int VAO, VBO;
-    int count;
+struct Asteroid {
+    float orbitRadius;
+    float orbitAngle;
+    float orbitSpeed;
+    float yOffset;
+    float radius;
+    float rotationAngle;
+    float rotationSpeed;
+    glm::vec3 rotationAxis;
 };
 
 struct Comet {
@@ -171,6 +157,7 @@ struct Comet {
     float tailLength;
     float life;
     float radius;
+    bool is3IAtlas;
 };
 std::vector<Comet> comets;
 
@@ -178,205 +165,145 @@ Mesh createSphere(float radius, int sectors = 32, int stacks = 32) {
     Mesh mesh;
     std::vector<float> verts;
     std::vector<unsigned int> inds;
-
     const float PI = 3.14159265359f;
-
     for (int i = 0; i <= stacks; ++i) {
         float phi = PI * i / stacks;
         for (int j = 0; j <= sectors; ++j) {
             float theta = 2 * PI * j / sectors;
-
             float x = sin(phi) * cos(theta);
             float y = cos(phi);
             float z = sin(phi) * sin(theta);
-
-            // Position
             verts.push_back(radius * x);
             verts.push_back(radius * y);
             verts.push_back(radius * z);
-
-            // Normal
-            verts.push_back(x);
-            verts.push_back(y);
-            verts.push_back(z);
-
-            // TexCoord
+            verts.push_back(x); verts.push_back(y); verts.push_back(z);
             verts.push_back((float)j / sectors);
             verts.push_back((float)i / stacks);
         }
     }
-
     for (int i = 0; i < stacks; ++i) {
         for (int j = 0; j < sectors; ++j) {
             int a = i * (sectors + 1) + j;
             int b = a + sectors + 1;
-
-            inds.push_back(a);
-            inds.push_back(b);
-            inds.push_back(a + 1);
-
-            inds.push_back(b);
-            inds.push_back(b + 1);
-            inds.push_back(a + 1);
+            inds.push_back(a); inds.push_back(b); inds.push_back(a + 1);
+            inds.push_back(b); inds.push_back(b + 1); inds.push_back(a + 1);
         }
     }
-
     mesh.vertices = verts;
     mesh.indices = inds;
     mesh.indexCount = inds.size();
-
     glGenVertexArrays(1, &mesh.VAO);
     glGenBuffers(1, &mesh.VBO);
     glGenBuffers(1, &mesh.EBO);
-
     glBindVertexArray(mesh.VAO);
     glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
     glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, inds.size() * sizeof(unsigned int), inds.data(), GL_STATIC_DRAW);
-
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
     glEnableVertexAttribArray(2);
-
     glBindVertexArray(0);
     return mesh;
 }
 
-AsteroidBelt createAsteroidBelt(float innerR, float outerR, float height, int numAsteroids) {
-    std::vector<float> verts;
+std::vector<Asteroid> createAsteroidBelt(float innerR, float outerR, float height, int numAsteroids) {
+    std::vector<Asteroid> asteroids;
     for (int i = 0; i < numAsteroids; ++i) {
-        // Random angle
-        float angle = ((float)rand() / RAND_MAX) * 2.0f * 3.14159265f;
-        // Random radius between inner and outer
-        float r = innerR + ((float)rand() / RAND_MAX) * (outerR - innerR);
-        // Random height
-        float y = ((float)rand() / RAND_MAX - 0.5f) * height;
-        
-        verts.push_back(r * cos(angle));
-        verts.push_back(y);
-        verts.push_back(r * sin(angle));
+        Asteroid a;
+        a.orbitAngle = ((float)rand() / RAND_MAX) * 2.0f * 3.14159265f;
+        a.orbitRadius = innerR + ((float)rand() / RAND_MAX) * (outerR - innerR);
+        a.yOffset = (((float)rand() / RAND_MAX) - 0.5f) * height;
+        a.radius = 0.3f + ((float)rand() / RAND_MAX) * 2.0f;
+        a.orbitSpeed = 0.02f + ((float)rand() / RAND_MAX) * 0.05f;
+        a.rotationAngle = ((float)rand() / RAND_MAX) * 360.0f;
+        a.rotationSpeed = 10.0f + ((float)rand() / RAND_MAX) * 90.0f;
+        float ra = ((float)rand() / RAND_MAX) * 2.0f * 3.14159265f;
+        float dec = ((float)rand() / RAND_MAX) * 3.14159265f;
+        a.rotationAxis = glm::vec3(sin(dec)*cos(ra), cos(dec), sin(dec)*sin(ra));
+        asteroids.push_back(a);
     }
-    
-    unsigned int VAO, VBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
-    return {VAO, VBO, numAsteroids};
+    return asteroids;
 }
 
-// Create a ring mesh (for Saturn)
 Mesh createRing(float innerRadius, float outerRadius, int segments = 64) {
     Mesh mesh;
     std::vector<float> verts;
     std::vector<unsigned int> inds;
-    
     for (int i = 0; i <= segments; ++i) {
         float angle = 2.0f * 3.14159265359f * i / segments;
-        float ca = cos(angle);
-        float sa = sin(angle);
-        
-        // Outer ring vertex
-        verts.push_back(outerRadius * ca);
-        verts.push_back(0.0f);
-        verts.push_back(outerRadius * sa);
-        verts.push_back(0.0f);
-        verts.push_back(1.0f);
-        verts.push_back(0.0f);
-        verts.push_back((float)i / segments);
-        verts.push_back(1.0f);
-        
-        // Inner ring vertex
-        verts.push_back(innerRadius * ca);
-        verts.push_back(0.0f);
-        verts.push_back(innerRadius * sa);
-        verts.push_back(0.0f);
-        verts.push_back(1.0f);
-        verts.push_back(0.0f);
-        verts.push_back((float)i / segments);
-        verts.push_back(0.0f);
-        
+        float ca = cos(angle), sa = sin(angle);
+        verts.push_back(outerRadius * ca); verts.push_back(0.0f); verts.push_back(outerRadius * sa);
+        verts.push_back(0.0f); verts.push_back(1.0f); verts.push_back(0.0f);
+        verts.push_back((float)i / segments); verts.push_back(1.0f);
+        verts.push_back(innerRadius * ca); verts.push_back(0.0f); verts.push_back(innerRadius * sa);
+        verts.push_back(0.0f); verts.push_back(1.0f); verts.push_back(0.0f);
+        verts.push_back((float)i / segments); verts.push_back(0.0f);
         if (i < segments) {
             int base = i * 2;
-            inds.push_back(base);
-            inds.push_back(base + 1);
-            inds.push_back(base + 2);
-            inds.push_back(base + 1);
-            inds.push_back(base + 3);
-            inds.push_back(base + 2);
+            inds.push_back(base); inds.push_back(base + 1); inds.push_back(base + 2);
+            inds.push_back(base + 1); inds.push_back(base + 3); inds.push_back(base + 2);
         }
     }
-    
-    mesh.vertices = verts;
-    mesh.indices = inds;
-    mesh.indexCount = inds.size();
-    
-    glGenVertexArrays(1, &mesh.VAO);
-    glGenBuffers(1, &mesh.VBO);
-    glGenBuffers(1, &mesh.EBO);
-    
+    mesh.vertices = verts; mesh.indices = inds; mesh.indexCount = inds.size();
+    glGenVertexArrays(1, &mesh.VAO); glGenBuffers(1, &mesh.VBO); glGenBuffers(1, &mesh.EBO);
     glBindVertexArray(mesh.VAO);
     glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
     glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, inds.size() * sizeof(unsigned int), inds.data(), GL_STATIC_DRAW);
-    
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
     glEnableVertexAttribArray(2);
-    
     glBindVertexArray(0);
     return mesh;
 }
 
-// Texture loading function
 unsigned int loadTexture(const char* path, bool flipVertically = true) {
     unsigned int textureID;
     glGenTextures(1, &textureID);
-    
     stbi_set_flip_vertically_on_load(flipVertically);
-    
     int width, height, nrComponents;
     unsigned char *data = stbi_load(path, &width, &height, &nrComponents, 0);
     if (data) {
         GLenum format;
-        if (nrComponents == 1)
-            format = GL_RED;
-        else if (nrComponents == 3)
-            format = GL_RGB;
-        else if (nrComponents == 4)
-            format = GL_RGBA;
-        
+        if (nrComponents == 1) format = GL_RED;
+        else if (nrComponents == 3) format = GL_RGB;
+        else if (nrComponents == 4) format = GL_RGBA;
         glBindTexture(GL_TEXTURE_2D, textureID);
         glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
-        
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        
         stbi_image_free(data);
     } else {
         std::cout << "Texture failed to load at path: " << path << std::endl;
         stbi_image_free(data);
     }
-    
     return textureID;
 }
 
-// Orbit ring generator (updated to use model matrix)
+unsigned int createWhiteTexture() {
+    unsigned int textureID;
+    glGenTextures(1, &textureID);
+    unsigned char white[4] = {255, 255, 255, 255};
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    return textureID;
+}
+
 unsigned int createOrbitRing(float radius, int segments = 128) {
     std::vector<float> verts;
     for (int i = 0; i <= segments; ++i) {
@@ -385,7 +312,6 @@ unsigned int createOrbitRing(float radius, int segments = 128) {
         verts.push_back(0.0f);
         verts.push_back(radius * sin(theta));
     }
-    
     unsigned int VAO, VBO;
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
@@ -398,7 +324,6 @@ unsigned int createOrbitRing(float radius, int segments = 128) {
     return VAO;
 }
 
-// Shader compilation
 unsigned int compileShader(const char* source, GLenum type) {
     unsigned int shader = glCreateShader(type);
     glShaderSource(shader, 1, &source, NULL);
@@ -432,7 +357,6 @@ unsigned int createShaderProgram(const char* vsSource, const char* fsSource) {
     return program;
 }
 
-// Camera class
 class Camera {
 public:
     glm::vec3 position;
@@ -444,12 +368,12 @@ public:
     float speed = 1000.0f;
     float mouseSensitivity = 0.1f;
     float fov = 45.0f;
-    
+
     Camera(glm::vec3 pos = glm::vec3(0.0f, 2000.0f, 5000.0f)) {
         position = pos;
         updateVectors();
     }
-    
+
     void updateVectors() {
         front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
         front.y = sin(glm::radians(pitch));
@@ -458,11 +382,11 @@ public:
         right = glm::normalize(glm::cross(front, glm::vec3(0.0f, 1.0f, 0.0f)));
         up = glm::normalize(glm::cross(right, front));
     }
-    
+
     glm::mat4 getViewMatrix() {
         return glm::lookAt(position, position + front, up);
     }
-    
+
     void processMouse(float xoffset, float yoffset) {
         xoffset *= mouseSensitivity;
         yoffset *= mouseSensitivity;
@@ -472,7 +396,7 @@ public:
         if (pitch < -89.0f) pitch = -89.0f;
         updateVectors();
     }
-    
+
     void processKeyboard(int dir, float deltaTime) {
         float vel = speed * deltaTime;
         if (dir == 0) position += front * vel;
@@ -484,7 +408,6 @@ public:
     }
 };
 
-// Astronomical data structures
 struct Moon {
     std::string name;
     float radius;
@@ -517,94 +440,93 @@ struct Planet {
     float ringOuterRadius;
 };
 
-// Create solar system with texture assignments
 std::vector<Planet> createSolarSystem() {
     std::vector<Planet> planets;
-    
-    // Distance compression function
     auto compressDistance = [](float realAU) -> float {
         float realMkm = realAU * 149.6f;
         if (realMkm < 100) return realMkm * 2.0f;
         return 200.0f + (realMkm - 100.0f) * 0.4f;
     };
-    
-    // Mercury
+
     planets.push_back({
         "Mercury", 2.4f, compressDistance(0.39f), 88.0f, 1407.6f, 7.0f, 0.03f,
         {loadTexture("2k_mercury.jpg"), 0}, 0.7f, 0.3f, 0.0f, 0.0f, 0, {}, false, 0, 0
     });
-    
-    // Venus (using surface texture)
+
     planets.push_back({
         "Venus", 6.0f, compressDistance(0.72f), 224.7f, 5832.5f, 3.4f, 177.4f,
         {loadTexture("2k_venus_surface.jpg"), loadTexture("2k_venus_atmosphere.jpg")}, 0.5f, 0.4f, 0.0f, 0.0f, 0, {}, false, 0, 0
     });
-    
-    // Earth (with night texture for city lights)
+
     Planet earth = {
         "Earth", 6.4f, compressDistance(1.0f), 365.25f, 24.0f, 0.0f, 23.5f,
         {loadTexture("2k_earth_daymap.jpg"), loadTexture("2k_earth_nightmap.jpg")}, 0.4f, 0.5f, 0.0f, 0.0f, 0, {}, false, 0, 0
     };
-    earth.moons.push_back({"Moon", 1.7f, 0.384f, 27.3f, 5.1f, 
+    earth.moons.push_back({"Moon", 1.7f, 12.0f, 27.3f, 5.1f, 
         {loadTexture("2k_moon.jpg"), 0}, 0.9f, 0.0f, 0});
     planets.push_back(earth);
-    
-    // Mars
+
     Planet mars = {
         "Mars", 3.4f, compressDistance(1.52f), 687.0f, 24.6f, 1.9f, 25.2f,
         {loadTexture("2k_mars.jpg"), 0}, 0.8f, 0.3f, 0.0f, 0.0f, 0, {}, false, 0, 0
     };
-    // Mars moons (using moon texture as placeholder)
-    mars.moons.push_back({"Phobos", 0.15f, 0.009f, 0.32f, 1.0f, 
+    mars.moons.push_back({"Phobos", 0.15f, 0.009f * 1000.0f, 0.32f, 1.0f, 
         {loadTexture("2k_moon.jpg"), 0}, 0.95f, 0.0f, 0});
-    mars.moons.push_back({"Deimos", 0.08f, 0.023f, 1.26f, 2.0f, 
+    mars.moons.push_back({"Deimos", 0.08f, 0.023f * 1000.0f, 1.26f, 2.0f, 
         {loadTexture("2k_moon.jpg"), 0}, 0.95f, 0.0f, 0});
     planets.push_back(mars);
-    
-    // Jupiter
+
     Planet jupiter = {
         "Jupiter", 71.5f, compressDistance(5.2f), 4333.0f, 9.9f, 1.3f, 3.1f,
         {loadTexture("2k_jupiter.jpg"), 0}, 0.3f, 0.6f, 0.0f, 0.0f, 0, {}, false, 0, 0
     };
-    // Jupiter's moons using moon texture
     for (int i = 0; i < 4; i++) {
+        float distance;
+        switch (i) {
+            case 0: distance = 15.0f; break; // Io 
+            case 1: distance = 22.0f; break; // Europa 
+            case 2: distance = 35.0f; break; // Ganmende 
+            case 3: distance = 55.0f; break; // Callisto
+        }
         jupiter.moons.push_back({"Moon", i == 0 ? 1.8f : (i == 1 ? 1.6f : (i == 2 ? 2.6f : 2.4f)), 
-            i == 0 ? 0.422f : (i == 1 ? 0.671f : (i == 2 ? 1.070f : 1.883f)), 
+            distance,
             i == 0 ? 1.77f : (i == 1 ? 3.55f : (i == 2 ? 7.15f : 16.69f)), 
             0.0f, {loadTexture("2k_moon.jpg"), 0}, 0.7f, 0.0f, 0});
     }
     planets.push_back(jupiter);
-    
-    // Saturn (with rings)
+
     Planet saturn = {
         "Saturn", 60.3f, compressDistance(9.5f), 10759.0f, 10.7f, 2.5f, 26.7f,
         {loadTexture("2k_saturn.jpg"), 0}, 0.3f, 0.7f, 0.0f, 0.0f, 0, {}, true, 90.0f, 140.0f
     };
-    // Saturn's moons
     for (int i = 0; i < 4; i++) {
+        float distance;
+        switch(i) {
+            case 0: distance = 20.0f; break;  // Titan
+            case 1: distance = 10.0f; break;  // Enceladus
+            case 2: distance = 45.0f; break;  // Iapetus
+            case 3: distance = 8.0f; break;   // Mimas
+        }
         saturn.moons.push_back({"Moon", i == 0 ? 2.6f : (i == 1 ? 1.5f : (i == 2 ? 1.5f : 1.1f)), 
-            i == 0 ? 1.222f : (i == 1 ? 0.527f : (i == 2 ? 3.561f : 0.377f)), 
+            distance, 
             i == 0 ? 15.95f : (i == 1 ? 4.52f : (i == 2 ? 79.33f : 2.74f)), 
             0.0f, {loadTexture("2k_moon.jpg"), 0}, 0.7f, 0.0f, 0});
     }
     planets.push_back(saturn);
-    
-    // Uranus
+
     planets.push_back({
         "Uranus", 25.6f, compressDistance(19.2f), 30687.0f, 17.2f, 0.8f, 97.8f,
         {loadTexture("2k_uranus.jpg"), 0}, 0.5f, 0.5f, 0.0f, 0.0f, 0, {}, false, 0, 0
     });
-    
-    // Neptune
+
     planets.push_back({
         "Neptune", 24.8f, compressDistance(30.1f), 60190.0f, 16.1f, 1.8f, 28.3f,
         {loadTexture("2k_neptune.jpg"), 0}, 0.4f, 0.6f, 0.0f, 0.0f, 0, {}, false, 0, 0
     });
-    
+
     return planets;
 }
 
-// Global state
 Camera camera;
 bool firstMouse = true;
 float lastX = 400, lastY = 300;
@@ -615,14 +537,11 @@ int focusedPlanet = -1;
 
 void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
     if (firstMouse) {
-        lastX = xpos;
-        lastY = ypos;
-        firstMouse = false;
+        lastX = xpos; lastY = ypos; firstMouse = false;
     }
     float xoffset = xpos - lastX;
     float yoffset = lastY - ypos;
-    lastX = xpos;
-    lastY = ypos;
+    lastX = xpos; lastY = ypos;
     camera.processMouse(xoffset, yoffset);
 }
 
@@ -660,8 +579,27 @@ void processInput(GLFWwindow* window, float deltaTime) {
     if (keys[GLFW_KEY_ESCAPE]) glfwSetWindowShouldClose(window, true);
 }
 
+void spawn3IAtlas(std::vector<Comet>& comets, float marsOrbitRadius) {
+    float angle = 0.6f;
+    float dist = marsOrbitRadius * 1.35f;
+    float startX = dist * cos(angle);
+    float startZ = dist * sin(angle);
+    float startY = 120.0f;
+    glm::vec3 pos(startX, startY, startZ);
+    glm::vec3 toSun = glm::normalize(glm::vec3(0.0f) - pos);
+    glm::vec3 tangent(-toSun.z, 0.0f, toSun.x);
+    glm::vec3 dir = glm::normalize(toSun + tangent * 0.35f);
+    Comet atlas;
+    atlas.position = pos;
+    atlas.velocity = dir * 1500.0f;
+    atlas.tailLength = 500.0f;
+    atlas.life = 90.0f;
+    atlas.radius = 3.0f;
+    atlas.is3IAtlas = true;
+    comets.push_back(atlas);
+}
+
 int main() {
-    // Initialize GLFW
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         return -1;
@@ -676,7 +614,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    
+
     GLFWwindow* window = glfwCreateWindow(1600, 900, "Realistic Solar System Simulation", NULL, NULL);
     if (!window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
@@ -688,52 +626,46 @@ int main() {
     glfwSetScrollCallback(window, scrollCallback);
     glfwSetKeyCallback(window, keyCallback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    
-    // Initialize GLAD
+
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "Failed to initialize GLAD" << std::endl;
         return -1;
     }
-    
+
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    
-    // Compile shaders
+
     unsigned int planetShader = createShaderProgram(vertexShaderSource, fragmentShaderSource);
     unsigned int orbitShader = createShaderProgram(orbitVertexShader, orbitFragmentShader);
-    
-    // Create solar system
+
     auto planets = createSolarSystem();
-    // Astroid belt
-    AsteroidBelt belt = createAsteroidBelt(compressDistance(1.8f), compressDistance(2.8f), 30.0f, 10000);
-    
-    // Create meshes
+    float marsOrbitRadius = compressDistance(1.52f);
+
+    std::vector<Asteroid> asteroids = createAsteroidBelt(
+        compressDistance(1.8f), compressDistance(2.8f), 40.0f, 1200);
+    Mesh asteroidMesh = createSphere(1.0f, 5, 5);
+
     Mesh sunMesh = createSphere(80.0f, 64, 64);
     unsigned int sunTexture = loadTexture("2k_sun.jpg");
-    
-    // Create planet meshes
+    unsigned int whiteTexture = createWhiteTexture();
+
     std::vector<Mesh> planetMeshes;
     std::vector<Mesh> ringMeshes;
     for (auto& p : planets) {
         int stacks = std::max(24, (int)(p.radius / 2.0f));
         planetMeshes.push_back(createSphere(p.radius, stacks, stacks));
         p.orbitVAO = createOrbitRing(p.distance);
-        
         if (p.hasRings) {
             ringMeshes.push_back(createRing(p.ringInnerRadius, p.ringOuterRadius, 128));
-            unsigned int ringTexture = loadTexture("2k_saturn_ring_alpha.png");
-            // Store ring texture in planet struct (simplified - you'd need to add this to Planet struct)
         }
-        
         for (auto& m : p.moons) {
             m.orbitVAO = createOrbitRing(m.distance);
         }
     }
-    
-    // Create moon meshes
+
     std::vector<Mesh> moonMeshes;
     for (auto& p : planets) {
         for (auto& m : p.moons) {
@@ -741,59 +673,71 @@ int main() {
             moonMeshes.push_back(createSphere(m.radius, stacks, stacks));
         }
     }
-    
-    // Create stars background
-    std::vector<float> stars;
+
+    Mesh cometHeadMesh = createSphere(1.0f, 8, 8);
+
+    unsigned int cometTailVAO, cometTailVBO;
+    glGenVertexArrays(1, &cometTailVAO);
+    glGenBuffers(1, &cometTailVBO);
+    glBindVertexArray(cometTailVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, cometTailVBO);
+    glBufferData(GL_ARRAY_BUFFER, 20 * 6 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+
+    std::vector<float> starVerts;
     for (int i = 0; i < 5000; i++) {
-        stars.push_back(((float)rand() / RAND_MAX) * 20000.0f - 10000.0f);
-        stars.push_back(((float)rand() / RAND_MAX) * 10000.0f - 5000.0f);
-        stars.push_back(((float)rand() / RAND_MAX) * 20000.0f - 10000.0f);
+        starVerts.push_back(((float)rand() / RAND_MAX) * 20000.0f - 10000.0f);
+        starVerts.push_back(((float)rand() / RAND_MAX) * 10000.0f - 5000.0f);
+        starVerts.push_back(((float)rand() / RAND_MAX) * 20000.0f - 10000.0f);
     }
     unsigned int starsVAO, starsVBO;
     glGenVertexArrays(1, &starsVAO);
     glGenBuffers(1, &starsVBO);
     glBindVertexArray(starsVAO);
     glBindBuffer(GL_ARRAY_BUFFER, starsVBO);
-    glBufferData(GL_ARRAY_BUFFER, stars.size() * sizeof(float), stars.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, starVerts.size() * sizeof(float), starVerts.data(), GL_STATIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-    
+
     unsigned int starsTexture = loadTexture("2k_stars.jpg", false);
-    
-    // OpenGL state
+
     glEnable(GL_PROGRAM_POINT_SIZE);
-    
+
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
     double totalSimulatedDays = 0.0;
-    srand(time(0));
-    float commetSpawnTimer = 0.0f;
-    
-    // Main loop
+    srand((unsigned int)time(0));
+    float cometSpawnTimer = 0.0f;
+    bool atlasSpawned = false;
+
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = glfwGetTime();
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
-        
+
         processInput(window, deltaTime);
-        
-        // Update simulation
+
         if (!paused) {
             double daysPassed = deltaTime * timeScale;
             totalSimulatedDays += daysPassed;
-            
+
             for (auto& p : planets) {
                 p.currentOrbitAngle += (float)(2.0 * 3.14159265359 * daysPassed / p.orbitalPeriod);
                 p.currentRotationAngle += (float)(360.0 * daysPassed / (p.rotationPeriod / 24.0));
-                
                 for (auto& m : p.moons) {
                     m.currentAngle += (float)(2.0 * 3.14159265359 * daysPassed / m.orbitalPeriod);
                 }
             }
+
+            for (auto& a : asteroids) {
+                a.orbitAngle += a.orbitSpeed * deltaTime * timeScale * 0.01f;
+                a.rotationAngle += a.rotationSpeed * deltaTime;
+            }
         }
-        
-        // Camera follow mode
-        if (focusedPlanet >= 0 && focusedPlanet < planets.size()) {
+
+        if (focusedPlanet >= 0 && focusedPlanet < (int)planets.size()) {
             auto& p = planets[focusedPlanet];
             float px = p.distance * cos(p.currentOrbitAngle);
             float pz = p.distance * sin(p.currentOrbitAngle);
@@ -802,24 +746,56 @@ int main() {
             camera.front = glm::normalize(target - camera.position);
             camera.updateVectors();
         }
-        
-        // Render
+
+        cometSpawnTimer += deltaTime;
+        if (cometSpawnTimer > 8.0f && comets.size() < 8) {
+            float angle = ((float)rand() / RAND_MAX) * 2.0f * 3.14159f;
+            float dist = 6000.0f + ((float)rand() / RAND_MAX) * 6000.0f;
+            float startX = dist * cos(angle);
+            float startZ = dist * sin(angle);
+            float startY = ((float)rand() / RAND_MAX - 0.5f) * 1500.0f;
+            glm::vec3 pos(startX, startY, startZ);
+            glm::vec3 dir = glm::normalize(glm::vec3(0.0f) - pos);
+            Comet c;
+            c.position = pos;
+            c.velocity = dir * (800.0f + ((float)rand() / RAND_MAX) * 1200.0f);
+            c.tailLength = 150.0f + ((float)rand() / RAND_MAX) * 200.0f;
+            c.life = 25.0f + ((float)rand() / RAND_MAX) * 20.0f;
+            c.radius = 1.5f + ((float)rand() / RAND_MAX) * 2.0f;
+            c.is3IAtlas = false;
+            comets.push_back(c);
+            cometSpawnTimer = 0.0f;
+        }
+
+        if (!atlasSpawned && currentFrame > 3.0f) {
+            spawn3IAtlas(comets, marsOrbitRadius);
+            atlasSpawned = true;
+        }
+
+        for (auto it = comets.begin(); it != comets.end(); ) {
+            it->position += it->velocity * deltaTime;
+            it->life -= deltaTime;
+            if (it->life <= 0.0f) {
+                it = comets.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
         glClearColor(0.0f, 0.0f, 0.02f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        
-        // Render stars background (simple point sprites)
-        glUseProgram(planetShader);
+
         glm::mat4 projection = glm::perspective(glm::radians(camera.fov), 1600.0f / 900.0f, 0.1f, 20000.0f);
         glm::mat4 view = camera.getViewMatrix();
-        
-        glPointSize(1.0f);
-        glBindVertexArray(starsVAO);
-        glDrawArrays(GL_POINTS, 0, 5000);
-        
-        // Render Sun
+
         glUseProgram(planetShader);
         glUniformMatrix4fv(glGetUniformLocation(planetShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glUniformMatrix4fv(glGetUniformLocation(planetShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glPointSize(1.0f);
+        glBindVertexArray(starsVAO);
+        glDrawArrays(GL_POINTS, 0, 5000);
+
+        glUseProgram(planetShader);
         glUniform3f(glGetUniformLocation(planetShader, "lightPos"), 0.0f, 0.0f, 0.0f);
         glUniform3f(glGetUniformLocation(planetShader, "lightColor"), 1.0f, 0.95f, 0.8f);
         glUniform3f(glGetUniformLocation(planetShader, "viewPos"), camera.position.x, camera.position.y, camera.position.z);
@@ -830,80 +806,140 @@ int main() {
         glUniform1f(glGetUniformLocation(planetShader, "roughness"), 0.5f);
         glUniform1i(glGetUniformLocation(planetShader, "hasNightTexture"), 0);
         glUniform1f(glGetUniformLocation(planetShader, "isRings"), 0.0f);
-        
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, sunTexture);
         glUniform1i(glGetUniformLocation(planetShader, "diffuseTexture"), 0);
-        
+
         glm::mat4 model = glm::mat4(1.0f);
         model = glm::rotate(model, glm::radians(7.25f), glm::vec3(0.0f, 0.0f, 1.0f));
         model = glm::rotate(model, (float)glfwGetTime() * 0.05f, glm::vec3(0.0f, 1.0f, 0.0f));
         glUniformMatrix4fv(glGetUniformLocation(planetShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
         glUniform3f(glGetUniformLocation(planetShader, "objectColor"), 1.0f, 1.0f, 1.0f);
-        
         glBindVertexArray(sunMesh.VAO);
         glDrawElements(GL_TRIANGLES, sunMesh.indexCount, GL_UNSIGNED_INT, 0);
 
-        // Render Asteroid Belt
-        glUseProgram(planetShader); // Reuse planet shader
-        // Set no lighting (just ambient color) or use a special shader
         glUniform1i(glGetUniformLocation(planetShader, "isEmissive"), 0);
-        glUniform3f(glGetUniformLocation(planetShader, "objectColor"), 0.5f, 0.5f, 0.5f);
-        glUniform3f(glGetUniformLocation(planetShader, "lightColor"), 0.6f, 0.6f, 0.6f);
-        glUniform1f(glGetUniformLocation(planetShader, "ambientStrength"), 0.8f); 
+        glUniform1f(glGetUniformLocation(planetShader, "emissiveStrength"), 0.0f);
+        glUniform1f(glGetUniformLocation(planetShader, "ambientStrength"), 0.5f);
+        glUniform1f(glGetUniformLocation(planetShader, "specularStrength"), 0.1f);
+        glUniform1f(glGetUniformLocation(planetShader, "roughness"), 0.95f);
+        glUniform1i(glGetUniformLocation(planetShader, "hasNightTexture"), 0);
+        glUniform1f(glGetUniformLocation(planetShader, "isRings"), 0.0f);
+        glUniform3f(glGetUniformLocation(planetShader, "objectColor"), 0.55f, 0.5f, 0.45f);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, whiteTexture);
+        glUniform1i(glGetUniformLocation(planetShader, "diffuseTexture"), 0);
 
-        // Asteroids don't need a texture, but we can bind a tiny dot texture or just draw points.
-        glPointSize(1.5f);
-        glBindVertexArray(belt.VAO);
-        glDrawArrays(GL_POINTS, 0, belt.count);
-        
-        // Render planets
+        for (auto& a : asteroids) {
+            float ax = a.orbitRadius * cos(a.orbitAngle);
+            float az = a.orbitRadius * sin(a.orbitAngle);
+            glm::mat4 amodel = glm::mat4(1.0f);
+            amodel = glm::translate(amodel, glm::vec3(ax, a.yOffset, az));
+            amodel = glm::rotate(amodel, glm::radians(a.rotationAngle), a.rotationAxis);
+            amodel = glm::scale(amodel, glm::vec3(a.radius));
+            glUniformMatrix4fv(glGetUniformLocation(planetShader, "model"), 1, GL_FALSE, glm::value_ptr(amodel));
+            glBindVertexArray(asteroidMesh.VAO);
+            glDrawElements(GL_TRIANGLES, asteroidMesh.indexCount, GL_UNSIGNED_INT, 0);
+        }
+
+        glUseProgram(planetShader);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, whiteTexture);
+        glUniform1i(glGetUniformLocation(planetShader, "diffuseTexture"), 0);
+        glUniform1i(glGetUniformLocation(planetShader, "hasNightTexture"), 0);
+        glUniform1i(glGetUniformLocation(planetShader, "isEmissive"), 1);
+        glUniform1f(glGetUniformLocation(planetShader, "emissiveStrength"), 2.5f);
+        glUniform1f(glGetUniformLocation(planetShader, "isRings"), 0.0f);
+        glUniformMatrix4fv(glGetUniformLocation(planetShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(planetShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+
+        for (const auto& comet : comets) {
+            if (comet.is3IAtlas) {
+                glUniform3f(glGetUniformLocation(planetShader, "objectColor"), 0.75f, 0.85f, 1.0f);
+            } else {
+                glUniform3f(glGetUniformLocation(planetShader, "objectColor"), 0.9f, 0.95f, 1.0f);
+            }
+            glm::mat4 headModel = glm::mat4(1.0f);
+            headModel = glm::translate(headModel, comet.position);
+            headModel = glm::scale(headModel, glm::vec3(comet.radius));
+            glUniformMatrix4fv(glGetUniformLocation(planetShader, "model"), 1, GL_FALSE, glm::value_ptr(headModel));
+            glBindVertexArray(cometHeadMesh.VAO);
+            glDrawElements(GL_TRIANGLES, cometHeadMesh.indexCount, GL_UNSIGNED_INT, 0);
+        }
+
+        glUseProgram(orbitShader);
+        glUniformMatrix4fv(glGetUniformLocation(orbitShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(orbitShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glm::mat4 identityModel = glm::mat4(1.0f);
+        glUniformMatrix4fv(glGetUniformLocation(orbitShader, "model"), 1, GL_FALSE, glm::value_ptr(identityModel));
+
+        for (const auto& comet : comets) {
+            glm::vec3 tailDir = glm::normalize(comet.position);
+            glm::vec3 tailStart = comet.position + tailDir * comet.radius;
+            glm::vec3 tailEnd = comet.position + tailDir * comet.tailLength;
+            if (comet.is3IAtlas) {
+                glUniform3f(glGetUniformLocation(orbitShader, "color"), 0.5f, 0.7f, 1.0f);
+                glUniform1f(glGetUniformLocation(orbitShader, "alpha"), 0.7f);
+            } else {
+                glUniform3f(glGetUniformLocation(orbitShader, "color"), 0.6f, 0.8f, 1.0f);
+                glUniform1f(glGetUniformLocation(orbitShader, "alpha"), 0.5f);
+            }
+            float tailData[6] = {
+                tailStart.x, tailStart.y, tailStart.z,
+                tailEnd.x, tailEnd.y, tailEnd.z
+            };
+            glBindBuffer(GL_ARRAY_BUFFER, cometTailVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(tailData), tailData);
+            glBindVertexArray(cometTailVAO);
+            glLineWidth(comet.is3IAtlas ? 5.0f : 3.0f);
+            glDrawArrays(GL_LINES, 0, 2);
+        }
+        glLineWidth(1.0f);
+
+        glUseProgram(planetShader);
+        glUniformMatrix4fv(glGetUniformLocation(planetShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(planetShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniform3f(glGetUniformLocation(planetShader, "lightPos"), 0.0f, 0.0f, 0.0f);
+        glUniform3f(glGetUniformLocation(planetShader, "lightColor"), 1.0f, 0.95f, 0.8f);
+        glUniform3f(glGetUniformLocation(planetShader, "viewPos"), camera.position.x, camera.position.y, camera.position.z);
         glUniform1i(glGetUniformLocation(planetShader, "isEmissive"), 0);
         glUniform1f(glGetUniformLocation(planetShader, "emissiveStrength"), 0.0f);
         glUniform1f(glGetUniformLocation(planetShader, "ambientStrength"), 0.1f);
-        
+
         int moonIdx = 0;
         int ringIdx = 0;
-        
+
         for (size_t i = 0; i < planets.size(); ++i) {
             auto& p = planets[i];
-            
-            // Calculate position
             float px = p.distance * cos(p.currentOrbitAngle);
             float pz = p.distance * sin(p.currentOrbitAngle);
             float py = p.distance * sin(glm::radians(p.inclination)) * sin(p.currentOrbitAngle);
-            
-            // Planet model matrix
+
             model = glm::mat4(1.0f);
             model = glm::translate(model, glm::vec3(px, py, pz));
-            
-            // Axial tilt
             glm::vec3 tiltAxis = glm::vec3(sin(glm::radians(p.axialTilt)), cos(glm::radians(p.axialTilt)), 0.0f);
             model = glm::rotate(model, glm::radians(p.currentRotationAngle), tiltAxis);
-            
+
             glUniformMatrix4fv(glGetUniformLocation(planetShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
             glUniform3f(glGetUniformLocation(planetShader, "objectColor"), 1.0f, 1.0f, 1.0f);
             glUniform1f(glGetUniformLocation(planetShader, "specularStrength"), p.specular);
             glUniform1f(glGetUniformLocation(planetShader, "roughness"), p.roughness);
             glUniform1i(glGetUniformLocation(planetShader, "hasNightTexture"), p.textures.night != 0 ? 1 : 0);
             glUniform1f(glGetUniformLocation(planetShader, "isRings"), 0.0f);
-            
-            // Bind diffuse texture
+
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, p.textures.diffuse);
             glUniform1i(glGetUniformLocation(planetShader, "diffuseTexture"), 0);
-            
-            // Bind night texture if available
+
             if (p.textures.night != 0) {
                 glActiveTexture(GL_TEXTURE1);
                 glBindTexture(GL_TEXTURE_2D, p.textures.night);
                 glUniform1i(glGetUniformLocation(planetShader, "nightTexture"), 1);
             }
-            
+
             glBindVertexArray(planetMeshes[i].VAO);
             glDrawElements(GL_TRIANGLES, planetMeshes[i].indexCount, GL_UNSIGNED_INT, 0);
-            
-            // Render Saturn's rings
+
             if (p.hasRings) {
                 glUniform1f(glGetUniformLocation(planetShader, "isRings"), 1.0f);
                 glEnable(GL_BLEND);
@@ -912,51 +948,44 @@ int main() {
                 model = glm::rotate(model, glm::radians(p.axialTilt), glm::vec3(1.0f, 0.0f, 0.0f));
                 model = glm::rotate(model, glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f));
                 glUniformMatrix4fv(glGetUniformLocation(planetShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
-                
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, loadTexture("2k_saturn_ring_alpha.png"));
-                
-                if (ringIdx < ringMeshes.size()) {
+                if (ringIdx < (int)ringMeshes.size()) {
                     glBindVertexArray(ringMeshes[ringIdx].VAO);
                     glDrawElements(GL_TRIANGLES, ringMeshes[ringIdx].indexCount, GL_UNSIGNED_INT, 0);
                 }
                 glDisable(GL_BLEND);
                 ringIdx++;
             }
-            
-            // Render moons
+
             for (size_t j = 0; j < p.moons.size(); ++j) {
                 auto& m = p.moons[j];
-                
                 float mx = px + m.distance * cos(m.currentAngle);
                 float mz = pz + m.distance * sin(m.currentAngle);
                 float my = py + m.distance * sin(glm::radians(m.inclination)) * sin(m.currentAngle);
-                
+
                 model = glm::mat4(1.0f);
                 model = glm::translate(model, glm::vec3(mx, my, mz));
                 model = glm::rotate(model, (float)glfwGetTime() * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f));
-                
+
                 glUniformMatrix4fv(glGetUniformLocation(planetShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
                 glUniform3f(glGetUniformLocation(planetShader, "objectColor"), 1.0f, 1.0f, 1.0f);
                 glUniform1f(glGetUniformLocation(planetShader, "specularStrength"), 0.2f);
                 glUniform1f(glGetUniformLocation(planetShader, "roughness"), m.roughness);
                 glUniform1i(glGetUniformLocation(planetShader, "hasNightTexture"), 0);
                 glUniform1f(glGetUniformLocation(planetShader, "isRings"), 0.0f);
-                
                 glActiveTexture(GL_TEXTURE0);
                 glBindTexture(GL_TEXTURE_2D, m.textures.diffuse);
-                
                 glBindVertexArray(moonMeshes[moonIdx].VAO);
                 glDrawElements(GL_TRIANGLES, moonMeshes[moonIdx].indexCount, GL_UNSIGNED_INT, 0);
                 moonIdx++;
             }
         }
-        
-        // Render orbits
+
         glUseProgram(orbitShader);
         glUniformMatrix4fv(glGetUniformLocation(orbitShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
         glUniformMatrix4fv(glGetUniformLocation(orbitShader, "view"), 1, GL_FALSE, glm::value_ptr(view));
-        
+
         for (auto& p : planets) {
             model = glm::mat4(1.0f);
             glUniformMatrix4fv(glGetUniformLocation(orbitShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
@@ -964,32 +993,29 @@ int main() {
             glUniform1f(glGetUniformLocation(orbitShader, "alpha"), 0.3f);
             glBindVertexArray(p.orbitVAO);
             glDrawArrays(GL_LINE_LOOP, 0, 129);
-            
-            // Moon orbits
+
             float px = p.distance * cos(p.currentOrbitAngle);
             float pz = p.distance * sin(p.currentOrbitAngle);
             float py = p.distance * sin(glm::radians(p.inclination)) * sin(p.currentOrbitAngle);
-            
-            for (auto& m : p.moons) {
+
+            /*for (auto& m : p.moons) {
                 glm::mat4 orbitModel = glm::translate(glm::mat4(1.0f), glm::vec3(px, py, pz));
                 glUniformMatrix4fv(glGetUniformLocation(orbitShader, "model"), 1, GL_FALSE, glm::value_ptr(orbitModel));
                 glUniform3f(glGetUniformLocation(orbitShader, "color"), 0.2f, 0.2f, 0.4f);
                 glUniform1f(glGetUniformLocation(orbitShader, "alpha"), 0.2f);
                 glBindVertexArray(m.orbitVAO);
                 glDrawArrays(GL_LINE_LOOP, 0, 129);
-            }
+            }*/
         }
-        
-        // Swap buffers
+
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
-    
-    // Cleanup
+
     glDeleteVertexArrays(1, &sunMesh.VAO);
     glDeleteBuffers(1, &sunMesh.VBO);
     glDeleteBuffers(1, &sunMesh.EBO);
-    
+
     glfwTerminate();
     return 0;
 }
